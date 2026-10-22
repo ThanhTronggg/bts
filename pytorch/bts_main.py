@@ -35,7 +35,7 @@ import matplotlib.cm
 import threading
 from tqdm import tqdm
 
-from bts import BtsModel
+from bts import BtsModel, weights_init_xavier, silog_loss
 from bts_dataloader import *
 
 
@@ -59,8 +59,8 @@ parser.add_argument('--dataset',                   type=str,   help='dataset to 
 parser.add_argument('--data_path',                 type=str,   help='path to the data', required=True)
 parser.add_argument('--gt_path',                   type=str,   help='path to the groundtruth data', required=True)
 parser.add_argument('--filenames_file',            type=str,   help='path to the filenames text file', required=True)
-parser.add_argument('--input_height',              type=int,   help='input height', default=480)
-parser.add_argument('--input_width',               type=int,   help='input width',  default=640)
+parser.add_argument('--input_height', type=int, help='input height', default=416)
+parser.add_argument('--input_width', type=int, help='input width', default=544)
 parser.add_argument('--max_depth',                 type=float, help='maximum depth in estimation', default=10)
 
 # Log and save
@@ -104,7 +104,7 @@ parser.add_argument('--multiprocessing_distributed',           help='Use multi-p
 parser.add_argument('--do_online_eval',                        help='if set, perform online eval in every eval_freq steps', action='store_true')
 parser.add_argument('--data_path_eval',            type=str,   help='path to the data for online evaluation', required=False)
 parser.add_argument('--gt_path_eval',              type=str,   help='path to the groundtruth data for online evaluation', required=False)
-parser.add_argument('--filenames_file_eval',       type=str,   help='path to the filenames text file for online evaluation', required=False)
+parser.add_argument('--filenames_file_eval', type=str, default='/content/drive/MyDrive/bts_master/train_test_inputs/nyudepthv2_test_files_with_gt.txt', help='path to the filenames text file for online evaluation', required=False)
 parser.add_argument('--min_depth_eval',            type=float, help='minimum depth for evaluation', default=1e-3)
 parser.add_argument('--max_depth_eval',            type=float, help='maximum depth for evaluation', default=80)
 parser.add_argument('--eigen_crop',                            help='if set, crops according to Eigen NIPS14', action='store_true')
@@ -119,18 +119,10 @@ if sys.argv.__len__() == 2:
 else:
     args = parser.parse_args()
 
-if args.mode == 'train' and not args.checkpoint_path:
-    from bts import *
-
-elif args.mode == 'train' and args.checkpoint_path:
-    model_dir = os.path.dirname(args.checkpoint_path)
-    model_name = os.path.basename(model_dir)
+if args.mode == 'train':
     import sys
-    sys.path.append(model_dir)
-    for key, val in vars(__import__(model_name)).items():
-        if key.startswith('__') and key.endswith('__'):
-            continue
-        vars()[key] = val
+    sys.path.insert(0, './bts/pytorch')
+    from bts import *
 
 
 inv_normalize = transforms.Normalize(
@@ -424,7 +416,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     var_sum = [var.sum() for var in model.parameters() if var.requires_grad]
     var_cnt = len(var_sum)
-    var_sum = np.sum(var_sum)
+    var_sum = sum(v.detach().cpu().item() if torch.is_tensor(v) else v for v in var_sum)
 
     print("Initial variables' sum: {:.3f}, avg: {:.3f}".format(var_sum, var_sum/var_cnt))
 
@@ -469,7 +461,7 @@ def main_worker(gpu, ngpus_per_node, args):
             if global_step and global_step % args.log_freq == 0 and not model_just_loaded:
                 var_sum = [var.sum() for var in model.parameters() if var.requires_grad]
                 var_cnt = len(var_sum)
-                var_sum = np.sum(var_sum)
+                var_sum = sum(v.detach().cpu().item() if torch.is_tensor(v) else v for v in var_sum)
                 examples_per_sec = args.batch_size / duration * args.log_freq
                 duration = 0
                 time_sofar = (time.time() - start_time) / 3600
@@ -477,13 +469,13 @@ def main_worker(gpu, ngpus_per_node, args):
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
                     print("{}".format(args.model_name))
                 print_string = 'GPU: {} | examples/s: {:4.2f} | loss: {:.5f} | var sum: {:.3f} avg: {:.3f} | time elapsed: {:.2f}h | time left: {:.2f}h'
-                print(print_string.format(args.gpu, examples_per_sec, loss, var_sum.item(), var_sum.item()/var_cnt, time_sofar, training_time_left))
+                print(print_string.format(args.gpu, examples_per_sec, loss, var_sum, var_sum/var_cnt, time_sofar, training_time_left))
 
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                                                             and args.rank % ngpus_per_node == 0):
                     writer.add_scalar('silog_loss', loss, global_step)
                     writer.add_scalar('learning_rate', current_lr, global_step)
-                    writer.add_scalar('var average', var_sum.item()/var_cnt, global_step)
+                    writer.add_scalar('var average', var_sum/var_cnt, global_step)
                     depth_gt = torch.where(depth_gt < 1e-3, depth_gt * 0 + 1e3, depth_gt)
                     for i in range(num_log_images):
                         writer.add_image('depth_gt/image/{}'.format(i), normalize_result(1/depth_gt[i, :, :, :].data), global_step)

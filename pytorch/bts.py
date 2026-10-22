@@ -299,6 +299,13 @@ class encoder(nn.Module):
             self.feat_inds = [2, 4, 7, 11, 19]
             self.feat_out_channels = [16, 24, 32, 64, 1280]
             self.feat_names = []
+        elif params.encoder == 'efficientnet_b0_bts':
+            self.base_model = models.efficientnet_b0(pretrained=True).features
+            # EfficientNet-B0 feature maps: strides 2, 4, 8, 16, 32
+            # The loop below starts counting modules from i = 1.
+            self.feat_inds = [2, 3, 4, 6, 9]
+            self.feat_out_channels = [16, 24, 40, 112, 1280]
+            self.feat_names = []
         else:
             print('Not supported encoder: {}'.format(params.encoder))
 
@@ -312,6 +319,9 @@ class encoder(nn.Module):
             feature = v(feature)
             if self.params.encoder == 'mobilenetv2_bts':
                 if i == 2 or i == 4 or i == 7 or i == 11 or i == 19:
+                    skip_feat.append(feature)
+            elif self.params.encoder == 'efficientnet_b0_bts':
+                if i in self.feat_inds:
                     skip_feat.append(feature)
             else:
                 if any(x in k for x in self.feat_names):
