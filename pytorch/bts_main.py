@@ -51,8 +51,9 @@ parser.convert_arg_line_to_args = convert_arg_line_to_args
 
 parser.add_argument('--mode',                      type=str,   help='train or test', default='train')
 parser.add_argument('--model_name',                type=str,   help='model name', default='bts_eigen_v2')
-parser.add_argument('--encoder',                   type=str,   help='type of encoder, desenet121_bts, densenet161_bts, '
-                                                                    'resnet101_bts, resnet50_bts, resnext50_bts or resnext101_bts',
+parser.add_argument('--encoder',                   type=str,   help='type of encoder, densenet121_bts, densenet161_bts, '
+                                                                    'resnet101_bts, resnet50_bts, resnext50_bts, '
+                                                                    'resnext101_bts, efficientnet_b0_bts or swin_tiny_bts',
                                                                default='densenet161_bts')
 # Dataset
 parser.add_argument('--dataset',                   type=str,   help='dataset to train on, kitti or nyu', default='nyu')
