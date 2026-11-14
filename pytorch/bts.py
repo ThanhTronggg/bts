@@ -306,10 +306,38 @@ class encoder(nn.Module):
             self.feat_inds = [2, 3, 4, 6, 9]
             self.feat_out_channels = [16, 24, 40, 112, 1280]
             self.feat_names = []
+        elif params.encoder == 'swin_tiny_bts':
+            self.base_model = models.swin_t(pretrained=True)
+            self.swin_features = self.base_model.features
+            self.swin_h2_adapter = nn.ConvTranspose2d(96, 48, kernel_size=2, stride=2)
+            self.feat_out_channels = [48, 96, 192, 384, 768]
         else:
-            print('Not supported encoder: {}'.format(params.encoder))
+            raise ValueError('Not supported encoder: {}'.format(params.encoder))
+
+    def _forward_swin(self, x):
+        feature = self.swin_features[0](x)
+        feature = self.swin_features[1](feature)
+        stage4 = feature.permute(0, 3, 1, 2).contiguous()
+
+        feature = self.swin_features[2](feature)
+        feature = self.swin_features[3](feature)
+        stage8 = feature.permute(0, 3, 1, 2).contiguous()
+
+        feature = self.swin_features[4](feature)
+        feature = self.swin_features[5](feature)
+        stage16 = feature.permute(0, 3, 1, 2).contiguous()
+
+        feature = self.swin_features[6](feature)
+        feature = self.swin_features[7](feature)
+        stage32 = feature.permute(0, 3, 1, 2).contiguous()
+
+        stage2 = self.swin_h2_adapter(stage4)
+        return [stage2, stage4, stage8, stage16, stage32]
 
     def forward(self, x):
+        if self.params.encoder == 'swin_tiny_bts':
+            return self._forward_swin(x)
+
         feature = x
         skip_feat = []
         i = 1
