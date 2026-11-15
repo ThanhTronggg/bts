@@ -307,7 +307,7 @@ class encoder(nn.Module):
             self.feat_out_channels = [16, 24, 40, 112, 1280]
             self.feat_names = []
         elif params.encoder == 'swin_tiny_bts':
-            self.base_model = models.swin_t(pretrained=True)
+            self.base_model = models.swin_t(weights=models.Swin_T_Weights.DEFAULT)
             self.swin_features = self.base_model.features
             self.swin_h2_adapter = nn.ConvTranspose2d(96, 48, kernel_size=2, stride=2)
             self.feat_out_channels = [48, 96, 192, 384, 768]
