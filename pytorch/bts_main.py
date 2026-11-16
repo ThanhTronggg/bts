@@ -166,6 +166,52 @@ def enable_print():
     sys.stdout = sys.__stdout__
 
 
+def checkpoint_directory():
+    return os.path.join(args.log_directory, args.model_name)
+
+
+def save_latest_checkpoint(model, optimizer, global_step,
+                           best_eval_measures_higher_better,
+                           best_eval_measures_lower_better, best_eval_steps):
+    output_dir = checkpoint_directory()
+    os.makedirs(output_dir, exist_ok=True)
+
+    for filename in os.listdir(output_dir):
+        if filename.startswith('model-') and filename[6:].isdigit():
+            os.remove(os.path.join(output_dir, filename))
+    legacy_latest_path = os.path.join(output_dir, 'model-latest')
+    if os.path.isfile(legacy_latest_path):
+        os.remove(legacy_latest_path)
+
+    checkpoint = {'global_step': global_step,
+                  'model': model.state_dict(),
+                  'optimizer': optimizer.state_dict(),
+                  'best_eval_measures_higher_better': best_eval_measures_higher_better,
+                  'best_eval_measures_lower_better': best_eval_measures_lower_better,
+                  'best_eval_steps': best_eval_steps}
+    latest_path = os.path.join(output_dir, 'model-{}'.format(global_step))
+    temporary_path = latest_path + '.tmp'
+    torch.save(checkpoint, temporary_path)
+    os.replace(temporary_path, latest_path)
+
+
+def resolve_checkpoint_path(checkpoint_path):
+    if not os.path.isdir(checkpoint_path):
+        return checkpoint_path
+
+    candidates = []
+    for filename in os.listdir(checkpoint_path):
+        if filename.startswith('model-') and filename[6:].isdigit():
+            candidates.append((int(filename[6:]), filename))
+    if candidates:
+        return os.path.join(checkpoint_path, max(candidates)[1])
+
+    legacy_latest_path = os.path.join(checkpoint_path, 'model-latest')
+    if os.path.isfile(legacy_latest_path):
+        return legacy_latest_path
+    return checkpoint_path
+
+
 def get_num_lines(file_path):
     f = open(file_path, 'r')
     lines = f.readlines()
@@ -367,13 +413,14 @@ def main_worker(gpu, ngpus_per_node, args):
 
     model_just_loaded = False
     if args.checkpoint_path != '':
-        if os.path.isfile(args.checkpoint_path):
-            print("Loading checkpoint '{}'".format(args.checkpoint_path))
+        checkpoint_path = resolve_checkpoint_path(args.checkpoint_path)
+        if os.path.isfile(checkpoint_path):
+            print("Loading checkpoint '{}'".format(checkpoint_path))
             if args.gpu is None:
-                checkpoint = torch.load(args.checkpoint_path)
+                checkpoint = torch.load(checkpoint_path)
             else:
                 loc = 'cuda:{}'.format(args.gpu)
-                checkpoint = torch.load(args.checkpoint_path, map_location=loc)
+                checkpoint = torch.load(checkpoint_path, map_location=loc)
             global_step = checkpoint['global_step']
             model.load_state_dict(checkpoint['model'])
             optimizer.load_state_dict(checkpoint['optimizer'])
@@ -384,9 +431,9 @@ def main_worker(gpu, ngpus_per_node, args):
             except KeyError:
                 print("Could not load values for online evaluation")
 
-            print("Loaded checkpoint '{}' (global_step {})".format(args.checkpoint_path, checkpoint['global_step']))
+            print("Loaded checkpoint '{}' (global_step {})".format(checkpoint_path, checkpoint['global_step']))
         else:
-            print("No checkpoint found at '{}'".format(args.checkpoint_path))
+            print("No checkpoint found at '{}'".format(checkpoint_path))
         model_just_loaded = True
 
     if args.retrain:
@@ -488,12 +535,14 @@ def main_worker(gpu, ngpus_per_node, args):
                         writer.add_image('image/image/{}'.format(i), inv_normalize(image[i, :, :, :]).data, global_step)
                     writer.flush()
 
-            if not args.do_online_eval and global_step and global_step % args.save_freq == 0:
+            if global_step and global_step % args.save_freq == 0:
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                    checkpoint = {'global_step': global_step,
-                                  'model': model.state_dict(),
-                                  'optimizer': optimizer.state_dict()}
-                    torch.save(checkpoint, args.log_directory + '/' + args.model_name + '/model-{}'.format(global_step))
+                    save_latest_checkpoint(model, optimizer, global_step,
+                                           best_eval_measures_higher_better,
+                                           best_eval_measures_lower_better,
+                                           best_eval_steps)
+                    print('Saved latest checkpoint: {}'.format(
+                        os.path.join(checkpoint_directory(), 'model-{}'.format(global_step))))
 
             if args.do_online_eval and global_step and global_step % args.eval_freq == 0 and not model_just_loaded:
                 time.sleep(0.1)
@@ -517,8 +566,7 @@ def main_worker(gpu, ngpus_per_node, args):
                             old_best_name = '/model-{}-best_{}_{:.5f}'.format(old_best_step, eval_metrics[i], old_best)
                             model_path = args.log_directory + '/' + args.model_name + old_best_name
                             if os.path.exists(model_path):
-                                command = 'rm {}'.format(model_path)
-                                os.system(command)
+                                os.remove(model_path)
                             best_eval_steps[i] = global_step
                             model_save_name = '/model-{}-best_{}_{:.5f}'.format(global_step, eval_metrics[i], measure)
                             print('New best for {}. Saving model: {}'.format(eval_metrics[i], model_save_name))
@@ -569,7 +617,8 @@ def main():
         command = 'cp bts_dataloader.py ' + aux_out_path
         os.system(command)
     else:
-        loaded_model_dir = os.path.dirname(args.checkpoint_path)
+        loaded_model_path = resolve_checkpoint_path(args.checkpoint_path)
+        loaded_model_dir = os.path.dirname(loaded_model_path)
         loaded_model_name = os.path.basename(loaded_model_dir)
         loaded_model_filename = loaded_model_name + '.py'
 
